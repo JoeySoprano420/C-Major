@@ -1,94 +1,77 @@
-#include "Lexer.hpp"
+// ... includes
 #include <cctype>
+#include <unordered_map>
 
-Lexer::Lexer(const std::string& source) : src(source) {}
+static const std::unordered_map<std::string, TokenType> KW = {
+    {"capsule", TokenType::KwCapsule},
+    {"func", TokenType::KwFunc},
+    {"struct", TokenType::KwStruct},
+    {"class", TokenType::KwClass},
+    {"let", TokenType::KwLet},
+    {"return", TokenType::KwReturn},
+    {"if", TokenType::KwIf},
+    {"else", TokenType::KwElse},
+    {"loop", TokenType::KwLoop},
+    {"from", TokenType::KwFrom},
+    {"to", TokenType::KwTo},
+    {"say", TokenType::KwSay},
+    {"end", TokenType::KwEnd},
+};
 
-char Lexer::peek() const {
-    return pos < src.size() ? src[pos] : '\0';
+static bool isIdentStart(char c){ return std::isalpha((unsigned char)c) || c=='_'; }
+static bool isIdentPart (char c){ return std::isalnum((unsigned char)c) || c=='_'; }
+
+Token Lexer::identifier(char first){
+    size_t start = pos-1;
+    while (isIdentPart(peek())) advance();
+    std::string lex = src.substr(start, pos-start);
+    auto it = KW.find(lex);
+    if (it!=KW.end()) return make(it->second, lex);
+    return make(TokenType::Identifier, lex);
 }
 
-char Lexer::advance() {
-    if (pos < src.size()) {
-        char c = src[pos++];
-        column++;
-        if (c == '\n') { line++; column = 1; }
-        return c;
-    }
-    return '\0';
+Token Lexer::number(char first){
+    size_t start = pos-1;
+    bool isFloat=false;
+    while (std::isdigit(peek())) advance();
+    if (peek()=='.'){ isFloat=true; advance(); while (std::isdigit(peek())) advance(); }
+    return make(isFloat?TokenType::Float:TokenType::Number, src.substr(start, pos-start));
 }
 
-bool Lexer::match(char expected) {
-    if (peek() == expected) {
-        advance();
-        return true;
-    }
-    return false;
-}
-
-void Lexer::skipWhitespace() {
-    while (isspace(peek())) advance();
-}
-
-Token Lexer::makeToken(TokenType type, const std::string& lexeme) {
-    return Token(type, lexeme, line, column);
-}
-
-Token Lexer::identifier() {
-    size_t start = pos - 1;
-    while (isalnum(peek()) || peek() == '_') advance();
-    std::string lexeme = src.substr(start, pos - start);
-    return makeToken(TokenType::Identifier, lexeme);
-}
-
-Token Lexer::number() {
-    size_t start = pos - 1;
-    while (isdigit(peek())) advance();
-    if (peek() == '.') {
-        advance();
-        while (isdigit(peek())) advance();
-        return makeToken(TokenType::Float, src.substr(start, pos - start));
-    }
-    return makeToken(TokenType::Number, src.substr(start, pos - start));
-}
-
-Token Lexer::string() {
-    std::string result;
-    while (peek() != '"' && peek() != '\0') {
-        result += advance();
-    }
-    if (peek() == '"') advance();
-    return makeToken(TokenType::String, result);
-}
-
-std::vector<Token> Lexer::tokenize() {
-    std::vector<Token> tokens;
-
-    while (pos < src.size()) {
+std::vector<Token> Lexer::tokenize(){
+    std::vector<Token> out;
+    while (pos < src.size()){
         skipWhitespace();
-        char c = advance();
+        if (pos>=src.size()) break;
+        char c=advance();
+        if (isIdentStart(c)) { out.push_back(identifier(c)); continue; }
+        if (std::isdigit((unsigned char)c)) { out.push_back(number(c)); continue; }
+        if (c=='"'){ out.push_back(string()); continue; }
 
-        if (isalpha(c)) {
-            tokens.push_back(identifier());
-        } else if (isdigit(c)) {
-            tokens.push_back(number());
-        } else if (c == '"') {
-            tokens.push_back(string());
-        } else {
-            switch (c) {
-                case '(': tokens.push_back(makeToken(TokenType::OpenParen, "(")); break;
-                case ')': tokens.push_back(makeToken(TokenType::CloseParen, ")")); break;
-                case '{': tokens.push_back(makeToken(TokenType::OpenBrace, "{")); break;
-                case '}': tokens.push_back(makeToken(TokenType::CloseBrace, "}")); break;
-                case ':': tokens.push_back(makeToken(TokenType::Colon, ":")); break;
-                case ';': tokens.push_back(makeToken(TokenType::Semicolon, ";")); break;
-                case ',': tokens.push_back(makeToken(TokenType::Comma, ",")); break;
-                case '=': tokens.push_back(makeToken(TokenType::Equals, "=")); break;
-                default:
-                    tokens.push_back(makeToken(TokenType::Unknown, std::string(1, c)));
-            }
+        switch (c){
+            case '(': out.push_back(make(TokenType::LParen,"(")); break;
+            case ')': out.push_back(make(TokenType::RParen,")")); break;
+            case '{': out.push_back(make(TokenType::LBrace,"{")); break;
+            case '}': out.push_back(make(TokenType::RBrace,"}")); break;
+            case ':': out.push_back(make(TokenType::Colon,":")); break;
+            case ';': out.push_back(make(TokenType::Semicolon,";")); break;
+            case ',': out.push_back(make(TokenType::Comma,",")); break;
+            case '+': out.push_back(match('=')?make(TokenType::PlusEq,"+="):make(TokenType::Plus,"+")); break;
+            case '-': out.push_back(match('=')?make(TokenType::MinusEq,"-="):make(TokenType::Minus,"-")); break;
+            case '*': out.push_back(match('=')?make(TokenType::StarEq,"*="):make(TokenType::Star,"*")); break;
+            case '/': out.push_back(match('=')?make(TokenType::SlashEq,"/="):make(TokenType::Slash,"/")); break;
+            case '%': out.push_back(make(TokenType::Percent,"%")); break;
+            case '^': out.push_back(make(TokenType::Caret,"^")); break;
+            case '!': out.push_back(match('=')?make(TokenType::BangEq,"!="):make(TokenType::Bang,"!")); break;
+            case '&': out.push_back(match('&')?make(TokenType::AndAnd,"&&"):make(TokenType::Amp,"&")); break;
+            case '|': out.push_back(match('|')?make(TokenType::OrOr,"||"):make(TokenType::Pipe,"|")); break;
+            case '~': out.push_back(make(TokenType::Tilde,"~")); break;
+            case '<': out.push_back(match('=')?make(TokenType::LessEq,"<="):make(TokenType::Less,"<")); break;
+            case '>': out.push_back(match('=')?make(TokenType::GreaterEq,">="):make(TokenType::Greater,">")); break;
+            case '=': out.push_back(match('=')?make(TokenType::EqEq,"=="):make(TokenType::Assign,"=")); break;
+            default:  out.push_back(make(TokenType::Unknown,std::string(1,c)));
         }
     }
-
-    tokens.push_back(makeToken(TokenType::EndOfFile, "<EOF>"));
-    return tokens;
+    out.push_back(make(TokenType::EndOfFile,"<EOF>"));
+    return out;
 }
