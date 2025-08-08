@@ -116,23 +116,6 @@ Machine Friendly spacing, padding, and layout—made for CPUs and humans
 cmajor run project.cmajcapsule --trace --snap --profile
 
 
-Would you like a:
-
-✅ Sample compiler scaffolding (C++, Python, or Rust)
-
-✅ Full syntax .tmLanguage + .vsix extension
-
-✅ .cmaj capsule runner (REPL)
-
-✅ Pink Lemonade Compiler architecture breakdown
-
-✅ Capsule samples with diagrams
-
-✅ CMake project structure
-
-✅ Visual splash and branding pack for C Major
-
-
 🧑‍🎤 C Major Mascot Design
 🎼 Primary Symbol: 🎼 (Musical Staff / Score Sheet)
 Represents:
