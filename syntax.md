@@ -736,5 +736,41 @@ TOTAL: ~360 Reserved Keywords (Expandable)
 * Pink Lemonade compiler extensions
 
 
+## HELLO EORLD:
+
+capsule main:
+  say "Hello from C Major"
+end
 
 
+
+## 🧬 Function & Struct Definitions:
+
+func greet(name):
+  say "Hello, " + name
+end
+
+struct Color:
+  let r: int
+  let g: int
+  let b: int
+end
+
+
+
+## EXAMPLE PROGRAM:
+
+func blend(r, g, b):
+  let avg = (r + g + b) / 3
+  return avg
+end
+
+capsule main:
+  let c = blend(100, 120, 130)
+  show c
+  if (c > 110):
+    say "Bright"
+  else:
+    say "Dim"
+  end
+end
