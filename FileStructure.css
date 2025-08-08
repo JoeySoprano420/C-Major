@@ -1,0 +1,13 @@
+/CMAJOR_COMPILER/
+│
+├── src/
+│   ├── Token.hpp
+│   ├── Lexer.cpp / Lexer.hpp
+│   ├── Parser.cpp / Parser.hpp
+│   ├── AST.hpp
+│   ├── Runner.cpp
+│   └── main.cpp
+│
+├── test.cmaj
+├── CMakeLists.txt
+└── README.md
