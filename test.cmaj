@@ -1,5 +1,20 @@
-capsule test:
-    say "Hello, Maestro"
-    let x = 42
-    say "Execution done."
+func add(a, b):
+    let t = a + b;
+    return t;
+end
+
+capsule main:
+    say "Hello from C Major!";
+    let i = 0;
+    loop i from 0 to 3:
+        if (i == 2):
+            say "i is two";
+        else:
+            say "tick";
+        end
+    end
+    let z = add(40, 2);
+    if (z >= 42):
+        say "Answer achieved";
+    end
 end
