@@ -181,3 +181,96 @@ private:
     }
 };
 
+// --- Lexer Enhancements ---
+
+namespace LexerFixes {
+
+bool isValidEscape(char c) {
+    return c == 'n' || c == 't' || c == '\\' || c == '\'' || c == '\"' || c == 'r' || c == '0';
+}
+
+std::string decodeEscape(char c) {
+    switch (c) {
+        case 'n': return "\n";
+        case 't': return "\t";
+        case '\\': return "\\";
+        case '\'': return "\'";
+        case '\"': return "\"";
+        case 'r': return "\r";
+        case '0': return "\0";
+        default: return std::string(1, c);
+    }
+}
+
+// Patch for unget() to track previous line lengths
+class LineTracker {
+    std::vector<int> lineLengths;
+public:
+    void record(int col) { lineLengths.push_back(col); }
+    int previous() {
+        if (lineLengths.empty()) return 1;
+        int len = lineLengths.back();
+        lineLengths.pop_back();
+        return len;
+    }
+};
+
+LineTracker tracker;
+
+void enhancedUnget(Lexer& lexer, const std::string& input) {
+    if (lexer.pos == 0) return;
+    lexer.pos--;
+    if (input[lexer.pos] == '\n') {
+        lexer.line--;
+        lexer.col = tracker.previous();
+    } else {
+        lexer.col--;
+    }
+}
+
+// Enhanced string parser
+Token parseString(Lexer& lexer) {
+    int startLine = lexer.line, startCol = lexer.col;
+    std::string value;
+    lexer.get(); // consume opening "
+
+    while (lexer.peek() != '\"' && lexer.peek() != '\0') {
+        if (lexer.peek() == '\\') {
+            lexer.get(); // consume '\'
+            char esc = lexer.get();
+            if (isValidEscape(esc))
+                value += decodeEscape(esc);
+            else
+                value += esc; // fallback
+        } else {
+            value += lexer.get();
+        }
+    }
+
+    if (lexer.peek() == '\"') lexer.get(); // consume closing "
+    else return {TokenType::Unknown, value, startLine, startCol}; // unterminated
+
+    return {TokenType::String, value, startLine, startCol};
+}
+
+// Enhanced char parser
+Token parseChar(Lexer& lexer) {
+    int startLine = lexer.line, startCol = lexer.col;
+    std::string value;
+    lexer.get(); // consume opening '
+
+    if (lexer.peek() == '\\') {
+        lexer.get();
+        char esc = lexer.get();
+        value = decodeEscape(esc);
+    } else {
+        value += lexer.get();
+    }
+
+    if (lexer.peek() == '\'') lexer.get(); // consume closing '
+    else return {TokenType::Unknown, value, startLine, startCol}; // unterminated
+
+    return {TokenType::String, value, startLine, startCol};
+}
+
+} // namespace LexerFixes
