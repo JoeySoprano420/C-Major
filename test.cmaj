@@ -1,0 +1,5 @@
+capsule test:
+    say "Hello, Maestro"
+    let x = 42
+    say "Execution done."
+end
