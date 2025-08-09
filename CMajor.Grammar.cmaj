@@ -1,0 +1,954 @@
+// File: CMajor.Grammar.cmaj
+
+capsule GrammarCodebase : schedule(priority=1, deadline="immediate") {
+
+  // =========================
+  // 1) Canonical Token Types
+  // =========================
+  enum TokenType {
+    // Core
+    Identifier, Number, Float, String, EndOfFile,
+
+    // Operators
+    Plus, Minus, Star, Slash, EqualEqual, BangEqual, Less, Greater, LessEqual, GreaterEqual,
+    AndAnd, OrOr, Assign, Bang, Tilde, Comma, Dot, Colon, Semicolon,
+    LParen, RParen, LBrace, RBrace, LBracket, RBracket,
+
+    // Keywords
+    KwLet, KwReturn, KwIf, KwElse, KwLoop, KwFrom, KwTo,
+    KwFunc, KwStruct, KwClass, KwEnum, KwObject, KwCapsule,
+    KwSchedule, KwPriority, KwDeadline,
+    KwSay, KwDo, KwUse, KwShow, KwValidate, KwPause, KwResume,
+    KwRaise, KwThrow, KwCatch, KwReverse, KwRewind, KwSuggest,
+    KwMap, KwAuto, KwArchive, KwExpire, KwRecall, KwBlock, KwCapture,
+    KwMeasure, KwApproximate, KwAssert, KwTheorize, KwEvaluate, KwProof,
+    KwShorthand, KwMirror, KwLevel, KwAsk, KwDeny, KwHalt, KwReference,
+    KwTrace, KwSnapshot, KwNegotiate, KwQuarantine, KwMutate,
+    KwMost, KwBest, KwFastest, KwEach, KwIn,
+
+    // Types
+    KwInt, KwFloat, KwString, KwBool, KwVec3, KwPixel,
+
+    // Trivia
+    Whitespace, Comment
+  };
+
+  // =========================
+  // 2) Character Classes
+  // =========================
+  func isLetter(ch: char) -> bool {
+    return (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z');
+  }
+
+  func isDigit(ch: char) -> bool {
+    return (ch >= '0' && ch <= '9');
+  }
+
+  func isHexDigit(ch: char) -> bool {
+    return isDigit(ch) || (ch >= 'A' && ch <= 'F');
+  }
+
+  func isBase12Digit(ch: char) -> bool {
+    // base-12 allows 0..9 plus A, B
+    return isDigit(ch) || ch == 'A' || ch == 'B';
+  }
+
+  // =========================
+  // 3) Token
+  // =========================
+  struct Token {
+    type: TokenType;
+    lexeme: string;
+    line: int;
+    col: int;
+  }
+
+  // =========================
+  // 4) Lexer (spec & impl)
+  // =========================
+  struct Lexer {
+    src: string;
+    pos: int;
+    line: int;
+    col: int;
+    length: int;
+
+    func init(input: string) {
+      src = input;
+      pos = 0; line = 1; col = 1;
+      length = input.size();
+    }
+
+    func atEnd() -> bool { return pos >= length; }
+
+    func peek() -> char {
+      if atEnd() { return '\0'; }
+      return src[pos];
+    }
+
+    func advance() -> char {
+      ch := peek();
+      pos += 1; col += 1;
+      if ch == '\n' { line += 1; col = 1; }
+      return ch;
+    }
+
+    func match(expected: char) -> bool {
+      if atEnd() || src[pos] != expected { return false; }
+      pos += 1; col += 1;
+      return true;
+    }
+
+    func makeToken(t: TokenType, startPos: int, startLine: int, startCol: int) -> Token {
+      return Token{ type: t, lexeme: src.substr(startPos, pos - startPos), line: startLine, col: startCol };
+    }
+
+    // Keywords map
+    func keywordOrIdent(lex: string) -> TokenType {
+      switch lex {
+        case "let": return TokenType.KwLet;
+        case "return": return TokenType.KwReturn;
+        case "if": return TokenType.KwIf;
+        case "else": return TokenType.KwElse;
+        case "loop": return TokenType.KwLoop;
+        case "from": return TokenType.KwFrom;
+        case "to": return TokenType.KwTo;
+        case "func": return TokenType.KwFunc;
+        case "struct": return TokenType.KwStruct;
+        case "class": return TokenType.KwClass;
+        case "enum": return TokenType.KwEnum;
+        case "object": return TokenType.KwObject;
+        case "capsule": return TokenType.KwCapsule;
+        case "schedule": return TokenType.KwSchedule;
+        case "priority": return TokenType.KwPriority;
+        case "deadline": return TokenType.KwDeadline;
+
+        // tags & controls
+        case "say": return TokenType.KwSay;
+        case "do": return TokenType.KwDo;
+        case "use": return TokenType.KwUse;
+        case "show": return TokenType.KwShow;
+        case "validate": return TokenType.KwValidate;
+        case "pause": return TokenType.KwPause;
+        case "resume": return TokenType.KwResume;
+        case "raise": return TokenType.KwRaise;
+        case "throw": return TokenType.KwThrow;
+        case "catch": return TokenType.KwCatch;
+        case "reverse": return TokenType.KwReverse;
+        case "rewind": return TokenType.KwRewind;
+        case "suggest": return TokenType.KwSuggest;
+        case "map": return TokenType.KwMap;
+        case "auto": return TokenType.KwAuto;
+        case "archive": return TokenType.KwArchive;
+        case "expire": return TokenType.KwExpire;
+        case "recall": return TokenType.KwRecall;
+        case "block": return TokenType.KwBlock;
+        case "capture": return TokenType.KwCapture;
+        case "measure": return TokenType.KwMeasure;
+        case "approximate": return TokenType.KwApproximate;
+        case "assert": return TokenType.KwAssert;
+        case "theorize": return TokenType.KwTheorize;
+        case "evaluate": return TokenType.KwEvaluate;
+        case "proof": return TokenType.KwProof;
+        case "shorthand": return TokenType.KwShorthand;
+        case "mirror": return TokenType.KwMirror;
+        case "level": return TokenType.KwLevel;
+        case "ask": return TokenType.KwAsk;
+        case "deny": return TokenType.KwDeny;
+        case "halt": return TokenType.KwHalt;
+        case "reference": return TokenType.KwReference;
+
+        case "trace": return TokenType.KwTrace;
+        case "snapshot": return TokenType.KwSnapshot;
+        case "negotiate": return TokenType.KwNegotiate;
+        case "quarantine": return TokenType.KwQuarantine;
+        case "mutate": return TokenType.KwMutate;
+
+        case "most": return TokenType.KwMost;
+        case "best": return TokenType.KwBest;
+        case "fastest": return TokenType.KwFastest;
+        case "each": return TokenType.KwEach;
+        case "in": return TokenType.KwIn;
+
+        // types
+        case "int": return TokenType.KwInt;
+        case "float": return TokenType.KwFloat;
+        case "string": return TokenType.KwString;
+        case "bool": return TokenType.KwBool;
+        case "vec3": return TokenType.KwVec3;
+        case "pixel": return TokenType.KwPixel;
+
+        default: return TokenType.Identifier;
+      }
+    }
+
+    func stringLiteral(startLine: int, startCol: int) -> Token {
+      startPos := pos - 1;
+      while !atEnd() && peek() != '"' {
+        if peek() == '\\' { advance(); if !atEnd() { advance(); } else { break; } }
+        else { advance(); }
+      }
+      if !atEnd() { advance(); } // consume closing "
+      return makeToken(TokenType.String, startPos, startLine, startCol);
+    }
+
+    func numberLiteral(startLine: int, startCol: int) -> Token {
+      startPos := pos - 1;
+      while isDigit(peek()) { advance(); }
+      if peek() == '.' {
+        // float
+        advance();
+        if !isDigit(peek()) { /* single dot was not float; back track? keep simple: treat as float with empty fraction */ }
+        while isDigit(peek()) { advance(); }
+        return makeToken(TokenType.Float, startPos, startLine, startCol);
+      }
+      return makeToken(TokenType.Number, startPos, startLine, startCol);
+    }
+
+    func identifierOrKeyword(startLine: int, startCol: int) -> Token {
+      startPos := pos - 1;
+      while isLetter(peek()) || isDigit(peek()) || peek() == '_' { advance(); }
+      text := src.substr(startPos, pos - startPos);
+      ty := keywordOrIdent(text);
+      return Token{ type: ty, lexeme: text, line: startLine, col: startCol };
+    }
+
+    func skipWhitespaceOrComment() -> Token? {
+      // returns a Whitespace/Comment token if you want to keep trivia; otherwise just loop
+      for {
+        ch := peek();
+        if ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n' {
+          startPos := pos; startLine := line; startCol := col;
+          while true {
+            c := peek();
+            if !(c == ' ' || c == '\t' || c == '\r' || c == '\n') { break; }
+            advance();
+          }
+          return Token{ type: TokenType.Whitespace, lexeme: src.substr(startPos, pos - startPos), line: startLine, col: startCol };
+        } else if ch == '/' && pos + 1 < length && src[pos+1] == '/' {
+          // line comment
+          startPos := pos; startLine := line; startCol := col;
+          while !atEnd() && peek() != '\n' { advance(); }
+          return Token{ type: TokenType.Comment, lexeme: src.substr(startPos, pos - startPos), line: startLine, col: startCol };
+        } else {
+          break;
+        }
+      }
+      return null;
+    }
+
+    func nextToken() -> Token {
+      // Skip trivia but you may collect it if needed
+      for {
+        maybe := skipWhitespaceOrComment();
+        if maybe == null { break; }
+      }
+
+      startLine := line; startCol := col;
+      if atEnd() { return Token{ type: TokenType.EndOfFile, lexeme: "", line: startLine, col: startCol }; }
+
+      ch := advance();
+      switch ch {
+        case '(': return makeToken(TokenType.LParen, pos-1, startLine, startCol);
+        case ')': return makeToken(TokenType.RParen, pos-1, startLine, startCol);
+        case '{': return makeToken(TokenType.LBrace, pos-1, startLine, startCol);
+        case '}': return makeToken(TokenType.RBrace, pos-1, startLine, startCol);
+        case '[': return makeToken(TokenType.LBracket, pos-1, startLine, startCol);
+        case ']': return makeToken(TokenType.RBracket, pos-1, startLine, startCol);
+        case ',': return makeToken(TokenType.Comma, pos-1, startLine, startCol);
+        case ';': return makeToken(TokenType.Semicolon, pos-1, startLine, startCol);
+        case ':': return makeToken(TokenType.Colon, pos-1, startLine, startCol);
+        case '.': return makeToken(TokenType.Dot, pos-1, startLine, startCol);
+        case '+': return makeToken(TokenType.Plus, pos-1, startLine, startCol);
+        case '-':
+          if match('=') { /* -= not specified; ignore */ }
+          return makeToken(TokenType.Minus, pos-1, startLine, startCol);
+        case '*': return makeToken(TokenType.Star, pos-1, startLine, startCol);
+        case '/': return makeToken(TokenType.Slash, pos-1, startLine, startCol);
+        case '!': if match('=') { return makeToken(TokenType.BangEqual, pos-2, startLine, startCol); } return makeToken(TokenType.Bang, pos-1, startLine, startCol);
+        case '=': if match('=') { return makeToken(TokenType.EqualEqual, pos-2, startLine, startCol); } return makeToken(TokenType.Assign, pos-1, startLine, startCol);
+        case '<': if match('=') { return makeToken(TokenType.LessEqual, pos-2, startLine, startCol); } return makeToken(TokenType.Less, pos-1, startLine, startCol);
+        case '>': if match('=') { return makeToken(TokenType.GreaterEqual, pos-2, startLine, startCol); } return makeToken(TokenType.Greater, pos-1, startLine, startCol);
+        case '&': if match('&') { return makeToken(TokenType.AndAnd, pos-2, startLine, startCol); }
+        case '|': if match('|') { return makeToken(TokenType.OrOr, pos-2, startLine, startCol); }
+        case '~': return makeToken(TokenType.Tilde, pos-1, startLine, startCol);
+        case '"': return stringLiteral(startLine, startCol);
+        default:
+          if isDigit(ch) { return numberLiteral(startLine, startCol); }
+          if isLetter(ch) || ch == '_' { return identifierOrKeyword(startLine, startCol); }
+          // Unknown char — treat as whitespace to avoid fatal
+          return Token{ type: TokenType.Whitespace, lexeme: string(1, ch), line: startLine, col: startCol };
+      }
+    }
+  }
+
+  // =========================
+  // 5) Canonical EBNF (Unified)
+  // =========================
+  // This string unifies README + syntax.md + grammar.ebnf (with extended forms).
+  let EBNF: string = R"EBNF(
+letter         = "A".."Z" | "a".."z" ;
+digit          = "0".."9" ;
+hexDigit       = digit | "A".."F" ;
+base12digit    = digit | "A" | "B" ;
+
+identifier     = letter , { letter | digit | "_" } ;
+string         = '"' , { character } , '"' ;
+number         = digit , { digit } ;
+float          = digit , { digit } , "." , digit , { digit } ;
+
+whitespace     = " " | "\t" | "\r" | "\n" ;
+comment        = "//" , { character } ;
+
+vector_literal = "vec3" , "(" , number , "," , number , "," , number , ")" ;
+
+literal        = number | float | string | vector_literal ;
+
+unary_op       = "-" | "!" | "~" ;
+binary_op      = "+" | "-" | "*" | "/" | "==" | "!=" | "<" | ">" | "<=" | ">=" | "&&" | "||" ;
+
+function_call  = identifier , "(" , [ argument_list ] , ")" ;
+argument_list  = expression , { "," , expression } ;
+
+superlative       = ("best" | "fastest") , identifier | "most" , identifier ;
+collection_expr   = "[" , expression , { "," , expression } , "]" ;
+ranked_expression = superlative , "of" , collection_expr ;
+
+mutation_expr  = "mutate" , identifier , "with" , expression ;
+
+expression     = literal
+               | identifier
+               | "(" , expression , ")"
+               | expression , binary_op , expression
+               | unary_op , expression
+               | function_call
+               | ranked_expression
+               | mutation_expr ;
+
+let_statement        = "let" , identifier , "=" , expression , ";" ;
+return_statement     = "return" , [ expression ] , ";" ;
+expression_statement = expression , ";" ;
+
+if_statement     = "if" , "(" , expression , ")" , block , [ "else" , block ] ;
+loop_statement   = "loop" , identifier , "from" , expression , "to" , expression , block ;
+
+tag_keyword =
+    "say" | "do" | "use" | "show" | "validate" | "pause" | "resume"
+  | "raise" | "throw" | "catch" | "reverse" | "rewind" | "suggest"
+  | "map" | "auto" | "archive" | "expire" | "loop" | "recall"
+  | "block" | "capture" | "measure" | "approximate" | "assert"
+  | "theorize" | "evaluate" | "proof" | "shorthand" | "mirror"
+  | "level" | "enum" | "ask" | "deny" | "halt" | "reference" ;
+
+tag_statement  = tag_keyword , [ expression ] , ";" ;
+repeatable     = tag_keyword , "each" , "in" , collection_expr , block ;
+
+param_list     = parameter , { "," , parameter } ;
+parameter      = identifier ;
+
+function_def   = "func" , identifier , "(" , [ param_list ] , ")" , block ;
+variable_def   = "let" , identifier , ":" , type_name , [ "=" , expression ] , ";" ;
+struct_def     = "struct" , identifier , "{" , { variable_def } , "}" ;
+class_def      = "class" , identifier , "{" , { function_def | variable_def } , "}" ;
+
+type_name      = "int" | "float" | "string" | "bool" | "vec3" | "pixel" | "capsule" | identifier ;
+
+schedule_hint  = "schedule" , "(" , "priority" , "=" , number , "," , "deadline" , "=" , string , ")" ;
+capsule_block  = { statement | function_def | struct_def | class_def | enum_def | object_def } ;
+capsule        = "capsule" , identifier , ":" , [ schedule_hint ] , capsule_block ;
+
+enum_def       = "enum" , identifier , "{" , { identifier , [ "=" , number ] , "," } , "}" ;
+object_def     = "object" , identifier , "{" , { variable_def | function_def } , "}" ;
+
+rewind_block   = "rewind" , block ;
+replay_block   = "replay" , block ;
+
+assert_statement   = "assert" , "(" , expression , ")" , ";" ;
+proof_statement    = "proof" , "(" , expression , ")" , ";" ;
+trace_statement    = "trace" , "(" , identifier , ")" , ";" ;
+snapshot_statement = "snapshot" , "(" , identifier , ")" , ";" ;
+pixel_def          = "pixel" , identifier , "=" , expression , ";" ;
+
+negotiate_block    = "negotiate" , "(" , identifier , ")" , block ;
+quarantine_block   = "quarantine" , "(" , identifier , ")" , block ;
+mutate_block       = "mutate" , "(" , identifier , "," , expression , ")" , block ;
+
+statement = let_statement | return_statement | if_statement | loop_statement | expression_statement
+          | tag_statement | assert_statement | proof_statement | trace_statement | snapshot_statement
+          | rewind_block | replay_block | enum_def | object_def | pixel_def
+          | negotiate_block | quarantine_block | mutate_block ;
+
+block      = "{" , { statement } , "}" ;
+
+program    = { capsule } , EOF ;
+)EBNF";
+
+  // =========================
+  // 6) AST Node Kinds
+  // =========================
+  enum NodeKind {
+    Program, Capsule, ScheduleHint,
+    FuncDef, ParamList, StructDef, ClassDef, EnumDef, ObjectDef, VarDef,
+    Block, If, Loop, Return, Let, ExprStmt, TagStmt,
+    Rewind, Replay, Assert, Proof, Trace, Snapshot, PixelDef,
+    Negotiate, Quarantine, MutateBlock,
+
+    // Expressions
+    IdentifierExpr, NumberExpr, FloatExpr, StringExpr, Vec3Expr,
+    CallExpr, UnaryExpr, BinaryExpr, RankedExpr, MutationExpr, CollectionExpr
+  };
+
+  struct AST {
+    kind: NodeKind;
+    text: string;
+    children: [AST];
+    line: int; col: int;
+
+    func node(k: NodeKind, t: string, l: int, c: int) -> AST {
+      return AST{ kind: k, text: t, children: [], line: l, col: c };
+    }
+  }
+
+  // =========================
+  // 7) Parser Skeleton (Pratt/Recursive-Descent Hybrid)
+  // =========================
+  struct Parser {
+    tokens: [Token];
+    idx: int;
+
+    func init(toks: [Token]) { tokens = toks; idx = 0; }
+    func peek() -> Token { return tokens[idx]; }
+    func atEnd() -> bool { return peek().type == TokenType.EndOfFile; }
+
+    func advance() -> Token {
+      cur := peek();
+      if !atEnd() { idx += 1; }
+      return cur;
+    }
+
+    func check(t: TokenType) -> bool { return peek().type == t; }
+
+    func expect(t: TokenType, msg: string) -> Token {
+      if check(t) { return advance(); }
+      // soft error handling: synthesize token
+      return Token{ type: t, lexeme: "", line: peek().line, col: peek().col };
+    }
+
+    // ---- Top level ----
+    func parseProgram() -> AST {
+      prog := AST.node(NodeKind.Program, "", 1, 1);
+      while !atEnd() {
+        cap := parseCapsule();
+        prog.children.push(cap);
+      }
+      return prog;
+    }
+
+    func parseCapsule() -> AST {
+      kCaps := expect(TokenType.KwCapsule, "expected 'capsule'");
+      name := expect(TokenType.Identifier, "expected capsule name");
+      expect(TokenType.Colon, "expected ':' after capsule name");
+
+      // optional schedule(...)
+      schedOpt := AST.node(NodeKind.ScheduleHint, "", name.line, name.col);
+      if check(TokenType.KwSchedule) {
+        advance(); // schedule
+        expect(TokenType.LParen, "expected '(' after schedule");
+        // schedule(priority=NUMBER, deadline="STRING")
+        expect(TokenType.KwPriority, "expected 'priority'");
+        expect(TokenType.Assign, "expected '='");
+        pri := expect(TokenType.Number, "expected number");
+        expect(TokenType.Comma, "expected ','");
+        expect(TokenType.KwDeadline, "expected 'deadline'");
+        expect(TokenType.Assign, "expected '='");
+        dln := expect(TokenType.String, "expected string");
+        expect(TokenType.RParen, "expected ')'");
+        schedOpt.text = "priority=" + pri.lexeme + ",deadline=" + dln.lexeme;
+      }
+
+      // capsule_block
+      block := parseCapsuleBlock();
+
+      capNode := AST.node(NodeKind.Capsule, name.lexeme, kCaps.line, kCaps.col);
+      if schedOpt.text.size() > 0 { capNode.children.push(schedOpt); }
+      capNode.children.push(block);
+      return capNode;
+    }
+
+    func parseCapsuleBlock() -> AST {
+      blk := AST.node(NodeKind.Block, "capsule_block", peek().line, peek().col);
+      // capsule_block := { declaration | statement }
+      // Stop when next token starts a new capsule or EOF
+      for {
+        if check(TokenType.KwCapsule) || check(TokenType.EndOfFile) { break; }
+        if startsDecl() {
+          decl := parseDeclaration();
+          blk.children.push(decl);
+        } else {
+          st := parseStatement();
+          blk.children.push(st);
+        }
+      }
+      return blk;
+    }
+
+    func startsDecl() -> bool {
+      return check(TokenType.KwFunc) || check(TokenType.KwStruct) || check(TokenType.KwClass)
+          || check(TokenType.KwEnum) || check(TokenType.KwObject);
+    }
+
+    func parseDeclaration() -> AST {
+      if check(TokenType.KwFunc) { return parseFuncDef(); }
+      if check(TokenType.KwStruct) { return parseStructDef(); }
+      if check(TokenType.KwClass) { return parseClassDef(); }
+      if check(TokenType.KwEnum) { return parseEnumDef(); }
+      if check(TokenType.KwObject) { return parseObjectDef(); }
+      // fallback
+      return parseStatement();
+    }
+
+    // ---- Decls ----
+    func parseFuncDef() -> AST {
+      kw := advance(); // func
+      name := expect(TokenType.Identifier, "func name");
+      expect(TokenType.LParen, "(");
+      params := AST.node(NodeKind.ParamList, "", name.line, name.col);
+      if !check(TokenType.RParen) {
+        for {
+          id := expect(TokenType.Identifier, "param");
+          p := AST.node(NodeKind.IdentifierExpr, id.lexeme, id.line, id.col);
+          params.children.push(p);
+          if check(TokenType.Comma) { advance(); continue; }
+          break;
+        }
+      }
+      expect(TokenType.RParen, ")");
+      body := parseBlock();
+      fn := AST.node(NodeKind.FuncDef, name.lexeme, kw.line, kw.col);
+      fn.children.push(params);
+      fn.children.push(body);
+      return fn;
+    }
+
+    func parseStructDef() -> AST {
+      kw := advance(); // struct
+      name := expect(TokenType.Identifier, "struct name");
+      expect(TokenType.LBrace, "{");
+      s := AST.node(NodeKind.StructDef, name.lexeme, kw.line, kw.col);
+      while !check(TokenType.RBrace) && !check(TokenType.EndOfFile) {
+        s.children.push(parseVariableDef());
+      }
+      expect(TokenType.RBrace, "}");
+      return s;
+    }
+
+    func parseClassDef() -> AST {
+      kw := advance(); // class
+      name := expect(TokenType.Identifier, "class name");
+      expect(TokenType.LBrace, "{");
+      c := AST.node(NodeKind.ClassDef, name.lexeme, kw.line, kw.col);
+      while !check(TokenType.RBrace) && !check(TokenType.EndOfFile) {
+        if check(TokenType.KwFunc) { c.children.push(parseFuncDef()); }
+        else { c.children.push(parseVariableDef()); }
+      }
+      expect(TokenType.RBrace, "}");
+      return c;
+    }
+
+    func parseEnumDef() -> AST {
+      kw := advance(); // enum
+      name := expect(TokenType.Identifier, "enum name");
+      expect(TokenType.LBrace, "{");
+      e := AST.node(NodeKind.EnumDef, name.lexeme, kw.line, kw.col);
+      // { ident [= number] , }*
+      while !check(TokenType.RBrace) && !check(TokenType.EndOfFile) {
+        id := expect(TokenType.Identifier, "enum item");
+        item := AST.node(NodeKind.IdentifierExpr, id.lexeme, id.line, id.col);
+        if check(TokenType.Assign) {
+          advance();
+          num := expect(TokenType.Number, "enum value");
+          val := AST.node(NodeKind.NumberExpr, num.lexeme, num.line, num.col);
+          item.children.push(val);
+        }
+        e.children.push(item);
+        if check(TokenType.Comma) { advance(); }
+      }
+      expect(TokenType.RBrace, "}");
+      return e;
+    }
+
+    func parseObjectDef() -> AST {
+      kw := advance(); // object
+      name := expect(TokenType.Identifier, "object name");
+      expect(TokenType.LBrace, "{");
+      o := AST.node(NodeKind.ObjectDef, name.lexeme, kw.line, kw.col);
+      while !check(TokenType.RBrace) && !check(TokenType.EndOfFile) {
+        if check(TokenType.KwFunc) { o.children.push(parseFuncDef()); }
+        else { o.children.push(parseVariableDef()); }
+      }
+      expect(TokenType.RBrace, "}");
+      return o;
+    }
+
+    func parseVariableDef() -> AST {
+      // variable_def = "let" ident ":" type_name [ "=" expr ] ";"
+      expect(TokenType.KwLet, "'let'");
+      name := expect(TokenType.Identifier, "var name");
+      expect(TokenType.Colon, ":");
+      ty := parseTypeName();
+      v := AST.node(NodeKind.VarDef, name.lexeme + ":" + ty, name.line, name.col);
+      if check(TokenType.Assign) {
+        advance();
+        init := parseExpression();
+        v.children.push(init);
+      }
+      expect(TokenType.Semicolon, ";");
+      return v;
+    }
+
+    func parseTypeName() -> string {
+      // accepts builtin keywords or identifiers
+      t := advance();
+      return t.lexeme;
+    }
+
+    // ---- Statements ----
+    func parseStatement() -> AST {
+      if check(TokenType.KwLet) { return parseLet(); }
+      if check(TokenType.KwReturn) { return parseReturn(); }
+      if check(TokenType.KwIf) { return parseIf(); }
+      if check(TokenType.KwLoop) { return parseLoop(); }
+      if isTagKeyword(peek().type) { return parseTagStmt(); }
+      if check(TokenType.KwAssert) { return parseAssertStmt(); }
+      if check(TokenType.KwProof) { return parseProofStmt(); }
+      if check(TokenType.KwTrace) { return parseTraceStmt(); }
+      if check(TokenType.KwSnapshot) { return parseSnapshotStmt(); }
+      if check(TokenType.KwRewind) { return parseRewind(); }
+      if check(TokenType.KwReverse) { /* alias to replay? */ return parseReplay(); }
+      if check(TokenType.KwNegotiate) { return parseNegotiateBlock(); }
+      if check(TokenType.KwQuarantine) { return parseQuarantineBlock(); }
+      if check(TokenType.KwMutate) { return parseMutateBlock(); }
+      if check(TokenType.KwPixel) { return parsePixelDef(); }
+      // expression ;
+      e := parseExpression();
+      expect(TokenType.Semicolon, ";");
+      st := AST.node(NodeKind.ExprStmt, "", e.line, e.col);
+      st.children.push(e);
+      return st;
+    }
+
+    func parseBlock() -> AST {
+      lb := expect(TokenType.LBrace, "{");
+      b := AST.node(NodeKind.Block, "", lb.line, lb.col);
+      while !check(TokenType.RBrace) && !check(TokenType.EndOfFile) {
+        b.children.push(parseStatement());
+      }
+      expect(TokenType.RBrace, "}");
+      return b;
+    }
+
+    func parseLet() -> AST {
+      kw := advance();
+      name := expect(TokenType.Identifier, "name");
+      expect(TokenType.Assign, "=");
+      e := parseExpression();
+      expect(TokenType.Semicolon, ";");
+      n := AST.node(NodeKind.Let, name.lexeme, kw.line, kw.col);
+      n.children.push(e);
+      return n;
+    }
+
+    func parseReturn() -> AST {
+      kw := advance();
+      // optional expression
+      if check(TokenType.Semicolon) {
+        advance();
+        return AST.node(NodeKind.Return, "", kw.line, kw.col);
+      }
+      e := parseExpression();
+      expect(TokenType.Semicolon, ";");
+      n := AST.node(NodeKind.Return, "", kw.line, kw.col);
+      n.children.push(e);
+      return n;
+    }
+
+    func parseIf() -> AST {
+      kw := advance();
+      expect(TokenType.LParen, "(");
+      cond := parseExpression();
+      expect(TokenType.RParen, ")");
+      thenB := parseBlock();
+      var elseB: AST? = null;
+      if check(TokenType.KwElse) { advance(); elseB = parseBlock(); }
+      n := AST.node(NodeKind.If, "", kw.line, kw.col);
+      n.children.push(cond); n.children.push(thenB);
+      if elseB != null { n.children.push(elseB!); }
+      return n;
+    }
+
+    func parseLoop() -> AST {
+      kw := advance();           // loop
+      id := expect(TokenType.Identifier, "iterator");
+      expect(TokenType.KwFrom, "from");
+      start := parseExpression();
+      expect(TokenType.KwTo, "to");
+      stop := parseExpression();
+      body := parseBlock();
+      n := AST.node(NodeKind.Loop, id.lexeme, kw.line, kw.col);
+      n.children.push(start); n.children.push(stop); n.children.push(body);
+      return n;
+    }
+
+    func isTagKeyword(tt: TokenType) -> bool {
+      switch tt {
+        case TokenType.KwSay, TokenType.KwDo, TokenType.KwUse, TokenType.KwShow, TokenType.KwValidate,
+             TokenType.KwPause, TokenType.KwResume, TokenType.KwRaise, TokenType.KwThrow, TokenType.KwCatch,
+             TokenType.KwReverse, TokenType.KwRewind, TokenType.KwSuggest, TokenType.KwMap, TokenType.KwAuto,
+             TokenType.KwArchive, TokenType.KwExpire, TokenType.KwRecall, TokenType.KwBlock, TokenType.KwCapture,
+             TokenType.KwMeasure, TokenType.KwApproximate, TokenType.KwAssert, TokenType.KwTheorize,
+             TokenType.KwEvaluate, TokenType.KwProof, TokenType.KwShorthand, TokenType.KwMirror, TokenType.KwLevel,
+             TokenType.KwEnum, TokenType.KwAsk, TokenType.KwDeny, TokenType.KwHalt, TokenType.KwReference:
+          return true;
+        default: return false;
+      }
+    }
+
+    func parseTagStmt() -> AST {
+      kw := advance();
+      t := AST.node(NodeKind.TagStmt, kw.lexeme, kw.line, kw.col);
+      // optional expression
+      if !check(TokenType.Semicolon) {
+        e := parseExpression();
+        t.children.push(e);
+      }
+      expect(TokenType.Semicolon, ";");
+      return t;
+    }
+
+    func parseAssertStmt() -> AST {
+      kw := advance(); expect(TokenType.LParen, "(");
+      e := parseExpression(); expect(TokenType.RParen, ")"); expect(TokenType.Semicolon, ";");
+      n := AST.node(NodeKind.Assert, "", kw.line, kw.col); n.children.push(e); return n;
+    }
+
+    func parseProofStmt() -> AST {
+      kw := advance(); expect(TokenType.LParen, "(");
+      e := parseExpression(); expect(TokenType.RParen, ")"); expect(TokenType.Semicolon, ";");
+      n := AST.node(NodeKind.Proof, "", kw.line, kw.col); n.children.push(e); return n;
+    }
+
+    func parseTraceStmt() -> AST {
+      kw := advance(); expect(TokenType.LParen, "(");
+      id := expect(TokenType.Identifier, "identifier"); expect(TokenType.RParen, ")"); expect(TokenType.Semicolon, ";");
+      n := AST.node(NodeKind.Trace, id.lexeme, kw.line, kw.col); return n;
+    }
+
+    func parseSnapshotStmt() -> AST {
+      kw := advance(); expect(TokenType.LParen, "(");
+      id := expect(TokenType.Identifier, "identifier"); expect(TokenType.RParen, ")"); expect(TokenType.Semicolon, ";");
+      n := AST.node(NodeKind.Snapshot, id.lexeme, kw.line, kw.col); return n;
+    }
+
+    func parseRewind() -> AST {
+      kw := advance();
+      b := parseBlock();
+      n := AST.node(NodeKind.Rewind, "", kw.line, kw.col); n.children.push(b); return n;
+    }
+
+    func parseReplay() -> AST {
+      kw := advance();
+      b := parseBlock();
+      n := AST.node(NodeKind.Replay, "", kw.line, kw.col); n.children.push(b); return n;
+    }
+
+    func parseNegotiateBlock() -> AST {
+      kw := advance(); expect(TokenType.LParen, "(");
+      id := expect(TokenType.Identifier, "identifier"); expect(TokenType.RParen, ")");
+      b := parseBlock();
+      n := AST.node(NodeKind.Negotiate, id.lexeme, kw.line, kw.col); n.children.push(b); return n;
+    }
+
+    func parseQuarantineBlock() -> AST {
+      kw := advance(); expect(TokenType.LParen, "(");
+      id := expect(TokenType.Identifier, "identifier"); expect(TokenType.RParen, ")");
+      b := parseBlock();
+      n := AST.node(NodeKind.Quarantine, id.lexeme, kw.line, kw.col); n.children.push(b); return n;
+    }
+
+    func parseMutateBlock() -> AST {
+      kw := advance(); expect(TokenType.LParen, "(");
+      id := expect(TokenType.Identifier, "identifier"); expect(TokenType.Comma, ",");
+      ex := parseExpression(); expect(TokenType.RParen, ")");
+      b := parseBlock();
+      n := AST.node(NodeKind.MutateBlock, id.lexeme, kw.line, kw.col);
+      n.children.push(ex); n.children.push(b); return n;
+    }
+
+    func parsePixelDef() -> AST {
+      kw := advance(); // pixel
+      name := expect(TokenType.Identifier, "pixel id");
+      expect(TokenType.Assign, "=");
+      ex := parseExpression();
+      expect(TokenType.Semicolon, ";");
+      n := AST.node(NodeKind.PixelDef, name.lexeme, kw.line, kw.col); n.children.push(ex); return n;
+    }
+
+    // ---- Expressions (Pratt) ----
+    func parseExpression() -> AST { return parsePrecedence(0); }
+
+    func precedence(op: TokenType) -> int {
+      switch op {
+        case TokenType.Star, TokenType.Slash: return 3;
+        case TokenType.Plus, TokenType.Minus: return 2;
+        case TokenType.EqualEqual, TokenType.BangEqual, TokenType.Less, TokenType.Greater, TokenType.LessEqual, TokenType.GreaterEqual: return 1;
+        case TokenType.AndAnd, TokenType.OrOr: return 0;
+        default: return -1;
+      }
+    }
+
+    func parsePrimary() -> AST {
+      t := advance();
+      switch t.type {
+        case TokenType.Identifier:
+          // function_call?
+          if check(TokenType.LParen) {
+            advance();
+            call := AST.node(NodeKind.CallExpr, t.lexeme, t.line, t.col);
+            if !check(TokenType.RParen) {
+              for {
+                arg := parseExpression();
+                call.children.push(arg);
+                if check(TokenType.Comma) { advance(); continue; }
+                break;
+              }
+            }
+            expect(TokenType.RParen, ")");
+            return call;
+          }
+          return AST.node(NodeKind.IdentifierExpr, t.lexeme, t.line, t.col);
+
+        case TokenType.Number: return AST.node(NodeKind.NumberExpr, t.lexeme, t.line, t.col);
+        case TokenType.Float:  return AST.node(NodeKind.FloatExpr,  t.lexeme, t.line, t.col);
+        case TokenType.String: return AST.node(NodeKind.StringExpr, t.lexeme, t.line, t.col);
+
+        case TokenType.KwVec3:
+          expect(TokenType.LParen, "(");
+          n1 := expect(TokenType.Number, "n"); expect(TokenType.Comma, ",");
+          n2 := expect(TokenType.Number, "n"); expect(TokenType.Comma, ",");
+          n3 := expect(TokenType.Number, "n"); expect(TokenType.RParen, ")");
+          v := AST.node(NodeKind.Vec3Expr, "vec3", t.line, t.col);
+          v.children.push(AST.node(NodeKind.NumberExpr, n1.lexeme, n1.line, n1.col));
+          v.children.push(AST.node(NodeKind.NumberExpr, n2.lexeme, n2.line, n2.col));
+          v.children.push(AST.node(NodeKind.NumberExpr, n3.lexeme, n3.line, n3.col));
+          return v;
+
+        case TokenType.LParen:
+          e := parseExpression();
+          expect(TokenType.RParen, ")");
+          return e;
+
+        case TokenType.KwMost, TokenType.KwBest, TokenType.KwFastest:
+          // ranked_expression = superlative 'of' collection_expr
+          supTok := t;
+          subj := expect(TokenType.Identifier, "identifier");
+          // 'of'
+          ofTok := expect(TokenType.Identifier, "of");
+          // Accept only 'of' lexeme; soft accept others
+          col := parseCollection();
+          r := AST.node(NodeKind.RankedExpr, supTok.lexeme + " " + subj.lexeme, supTok.line, supTok.col);
+          r.children.push(col); return r;
+
+        case TokenType.KwMutate:
+          // mutation_expr = mutate ident with expression
+          id := expect(TokenType.Identifier, "identifier");
+          w := expect(TokenType.Identifier, "with");
+          ex := parseExpression();
+          m := AST.node(NodeKind.MutationExpr, id.lexeme, t.line, t.col);
+          m.children.push(ex); return m;
+
+        case TokenType.LBracket:
+          // collection_expr
+          stepBack(); // we advanced '['; reuse parseCollection
+          return parseCollection();
+        default:
+          // unary?
+          if t.type == TokenType.Minus || t.type == TokenType.Bang || t.type == TokenType.Tilde {
+            rhs := parseExpression();
+            u := AST.node(NodeKind.UnaryExpr, t.lexeme, t.line, t.col);
+            u.children.push(rhs); return u;
+          }
+          // fallback
+          return AST.node(NodeKind.IdentifierExpr, t.lexeme, t.line, t.col);
+      }
+    }
+
+    func stepBack() {
+      if idx > 0 { idx -= 1; }
+    }
+
+    func parseCollection() -> AST {
+      lb := expect(TokenType.LBracket, "[");
+      c := AST.node(NodeKind.CollectionExpr, "", lb.line, lb.col);
+      if !check(TokenType.RBracket) {
+        for {
+          e := parseExpression();
+          c.children.push(e);
+          if check(TokenType.Comma) { advance(); continue; }
+          break;
+        }
+      }
+      expect(TokenType.RBracket, "]");
+      return c;
+    }
+
+    func parsePrecedence(minPrec: int) -> AST {
+      left := parsePrimary();
+      for {
+        op := peek().type;
+        prec := precedence(op);
+        if prec < minPrec { break; }
+        // consume operator
+        oper := advance();
+        right := parsePrecedence(prec + 1);
+        b := AST.node(NodeKind.BinaryExpr, oper.lexeme, oper.line, oper.col);
+        b.children.push(left); b.children.push(right);
+        left = b;
+      }
+      return left;
+    }
+  }
+
+  // =========================
+  // 8) API
+  // =========================
+  func tokenize(input: string) -> [Token] {
+    lx := Lexer{};
+    lx.init(input);
+    toks: [Token] = [];
+    for {
+      t := lx.nextToken();
+      if t.type != TokenType.Whitespace && t.type != TokenType.Comment {
+        toks.push(t);
+      }
+      if t.type == TokenType.EndOfFile { break; }
+    }
+    return toks;
+  }
+
+  func parse(input: string) -> AST {
+    toks := tokenize(input);
+    p := Parser{}; p.init(toks);
+    return p.parseProgram();
+  }
+
+  // Optional: dump EBNF
+  func grammarSpec() -> string { return EBNF; }
+
+  // =========================
+  // 9) Smoke Test (optional)
+  // =========================
+  func main() {
+    say "C-Major Unified Grammar Codebase ready.";
+    say grammarSpec(); // print unified EBNF for verification
+  }
+}
