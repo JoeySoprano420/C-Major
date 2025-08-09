@@ -1,78 +1,662 @@
-letter         = "A".."Z" | "a".."z" ;
-digit          = "0".."9" ;
-base12digit    = digit | "A" | "B" ;
-hexDigit       = digit | "A".."F" ;
+// ============================================================
+// C-Major Unified Grammar Codebase
+// File: grammar.cmajor
+// Purpose: Single-source grammar + lexer + parser + demo
+// Depends: Standard C-Major runtime only
+// ============================================================
 
-identifier     = letter , { letter | digit | "_" } ;
-string         = '"' , { character } , '"' ;
-number         = digit , { digit } ;
-float          = digit , { digit } , "." , digit , { digit } ;
+capsule Grammar.Core from "C-Major/Grammar" {
 
-whitespace     = " " | "\t" | "\r" | "\n" ;
-comment        = "//" , { character } ;
+    // ----------------------------
+    // 0) Canonical In-Source EBNF
+    // ----------------------------
+    let EBNF_SPEC = `
+Program       ::= { TopLevelDecl }
+TopLevelDecl  ::= CapsuleDecl | StructDecl | ClassDecl | FuncDecl | Stmt
 
-expression     = literal
-               | identifier
-               | "(" , expression , ")"
-               | expression , binary_op , expression
-               | unary_op , expression
-               | function_call ;
+CapsuleDecl   ::= "capsule" Identifier [ "from" StringLiteral ] "{" { TopLevelDecl } "}"
+StructDecl    ::= "struct" Identifier "{" { FieldDecl } "}"
+ClassDecl     ::= "class"  Identifier "{" { FieldDecl | MethodDecl } "}"
+FieldDecl     ::= "let" Identifier [ ":" TypeExpr ] [ "=" Expr ] ";"
+MethodDecl    ::= "func" Identifier "(" ParamList? ")" [ "->" TypeExpr ] Block
+FuncDecl      ::= "func" Identifier "(" ParamList? ")" [ "->" TypeExpr ] Block
+ParamList     ::= Param { "," Param }
+Param         ::= Identifier [ ":" TypeExpr ]
 
-literal        = number | float | string ;
+TypeExpr      ::= Identifier { "." Identifier } [ "?" ] [ "[]" ]
 
-binary_op      = "+" | "-" | "*" | "/" | "==" | "!=" | "<" | ">" | "<=" | ">=" ;
-unary_op       = "-" | "!" ;
+// Statements
+Stmt          ::= LetStmt | IfStmt | LoopStmt | SayStmt | ReturnStmt | Block | ExprStmt | EndStmt
+LetStmt       ::= "let" Identifier [ ":" TypeExpr ] [ "=" Expr ] ";"
+IfStmt        ::= "if" "(" Expr ")" Block [ "else" Block ]
+LoopStmt      ::= "loop" [ ForRange | Block ]
+ForRange      ::= "from" Expr "to" Expr Block
+SayStmt       ::= "say" Expr ";"
+ReturnStmt    ::= "return" [ Expr ] ";"
+ExprStmt      ::= Expr ";"
+EndStmt       ::= "end" ";"
+Block         ::= "{" { Stmt } "}"
 
-function_call  = identifier , "(" , [ argument_list ] , ")" ;
-argument_list  = expression , { "," , expression } ;
+Expr          ::= Assign
+Assign        ::= Or { "=" Or }        // right-associative chain: a=b=c
+Or            ::= And { "||" And }
+And           ::= BitOr { "&&" BitOr }
+BitOr         ::= BitXor { "|" BitXor }
+BitXor        ::= BitAnd { "^" BitAnd }
+BitAnd        ::= Equality { "&" Equality }
+Equality      ::= Rel { ( "==" | "!=" ) Rel }
+Rel           ::= Shift { ( "<" | ">" | "<=" | ">=" ) Shift }
+Shift         ::= Add { ( "<<" | ">>" ) Add }
+Add           ::= Mul { ( "+" | "-" ) Mul }
+Mul           ::= Unary { ( "*" | "/" | "%" ) Unary }
+Unary         ::= ( "!" | "-" | "+" | "*" | "&" | "++" | "--" ) Unary | Postfix
+Postfix       ::= Primary { ( "++" | "--" | "(" ArgList? ")" | "." Identifier ) }
+ArgList       ::= Expr { "," Expr }
+Primary       ::= Identifier | Number | StringLiteral | "(" Expr ")"
 
-statement      = let_statement
-               | return_statement
-               | if_statement
-               | loop_statement
-               | expression_statement
-               | tag_statement ;
+Identifier    ::= /[A-Za-z_][A-Za-z0-9_]*/
+Number        ::= /([0-9]+(\.[0-9]+)?)/
+StringLiteral ::= /"([^"\\]|\\.)*"/
+Comment       ::= "//" ~"\n" | "/*" .*? "*/"
+WS            ::= /[ \t\r\n]+/  (skipped)
+`;
 
-let_statement      = "let" , identifier , "=" , expression , ";" ;
-return_statement   = "return" , [ expression ] , ";" ;
-expression_statement = expression , ";" ;
+    // ----------------------------
+    // 1) Token & Lexer
+    // ----------------------------
+    enum TokenType {
+        // punctuation
+        LBrace, RBrace, LParen, RParen, LBracket, RBracket,
+        Comma, Semicolon, Dot, Arrow, // ->
+        // operators
+        Assign, Plus, Minus, Star, Slash, Percent,
+        Amp, Pipe, Caret, Bang, Lt, Gt, Le, Ge, EqEq, Neq, Shl, Shr, OrOr, AndAnd,
+        PlusPlus, MinusMinus,
+        // keywords
+        KwCapsule, KwFrom, KwStruct, KwClass, KwFunc, KwLet, KwReturn, KwIf, KwElse, KwLoop, KwTo, KwSay, KwEnd,
+        // literals / ids
+        Identifier, Number, String,
+        EndOfFile, Unknown
+    }
 
-if_statement       = "if" , "(" , expression , ")" , block , [ "else" , block ] ;
+    struct Token {
+        type: TokenType;
+        lexeme: string;
+        line: int;
+        col: int;
+    }
 
-loop_statement     = "loop" , identifier , "from" , expression , "to" , expression , block ;
+    // Minimal std helpers assumed in C-Major:
+    // - string ops: length(), slice(i,j), charAt(i), isDigit, isAlpha, isAlnum, startsWith, etc.
+    // - vector<T>, push, last, size
+    // - map<string, TokenType>
+    // Adjust names if your current stdlib differs.
 
-block              = "{" , { statement } , "}" ;
+    func isSpace(ch: char) -> bool { return ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n'; }
+    func isAlpha_(ch: char) -> bool { return (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || ch == '_'; }
+    func isAlnum_(ch: char) -> bool { return isAlpha_(ch) || (ch >= '0' && ch <= '9'); }
 
-tag_statement      = tag_keyword , [ expression ] , ";" ;
+    func kwTable() -> map<string, TokenType> {
+        let m = map<string, TokenType>();
+        m["capsule"] = TokenType.KwCapsule;
+        m["from"]    = TokenType.KwFrom;
+        m["struct"]  = TokenType.KwStruct;
+        m["class"]   = TokenType.KwClass;
+        m["func"]    = TokenType.KwFunc;
+        m["let"]     = TokenType.KwLet;
+        m["return"]  = TokenType.KwReturn;
+        m["if"]      = TokenType.KwIf;
+        m["else"]    = TokenType.KwElse;
+        m["loop"]    = TokenType.KwLoop;
+        m["to"]      = TokenType.KwTo;
+        m["say"]     = TokenType.KwSay;
+        m["end"]     = TokenType.KwEnd;
+        return m;
+    }
 
-tag_keyword        = "say" | "show" | "check" | "validate" | "capture" ;
+    struct Lexer {
+        src: string; pos: int; line: int; col: int;
+        kws: map<string, TokenType>;
 
-function_def   = "func" , identifier , "(" , [ param_list ] , ")" , block ;
+        func init(source: string) {
+            src = source; pos = 0; line = 1; col = 1;
+            kws = kwTable();
+        }
 
-param_list     = parameter , { "," , parameter } ;
-parameter      = identifier ;
+        func atEnd() -> bool { return pos >= src.length(); }
 
-struct_def     = "struct" , identifier , "{" , { variable_def } , "}" ;
-class_def      = "class" , identifier , "{" , { function_def | variable_def } , "}" ;
+        func peek() -> char {
+            if (atEnd()) return '\0';
+            return src.charAt(pos);
+        }
+        func peek2() -> char {
+            if (pos + 1 >= src.length()) return '\0';
+            return src.charAt(pos + 1);
+        }
+        func advance() -> char {
+            let c = peek();
+            pos += 1;
+            if (c == '\n') { line += 1; col = 1; } else { col += 1; }
+            return c;
+        }
 
-variable_def   = "let" , identifier , ":" , type_name , [ "=" , expression ] , ";" ;
+        func make(t: TokenType, startPos: int, startLine: int, startCol: int, text: string) -> Token {
+            let tok = Token{ type: t, lexeme: text, line: startLine, col: startCol };
+            return tok;
+        }
 
-type_name      = "int" | "float" | "string" | "bool" | identifier ;
+        func skipWSAndComments() {
+            loop {
+                // whitespace
+                while (!atEnd() && isSpace(peek())) advance();
 
-capsule       = "capsule" , identifier , ":" , capsule_block ;
+                // line comment //
+                if (!atEnd() && peek() == '/' && peek2() == '/') {
+                    while (!atEnd() && peek() != '\n') advance();
+                    continue;
+                }
+                // block comment /* ... */
+                if (!atEnd() && peek() == '/' && peek2() == '*') {
+                    advance(); advance();
+                    loop {
+                        if (atEnd()) break;
+                        if (peek() == '*' && peek2() == '/') { advance(); advance(); break; }
+                        advance();
+                    }
+                    continue;
+                }
+                break;
+            }
+        }
 
-capsule_block = { statement | function_def | struct_def | class_def } ;
+        func match2(a: char, b: char) -> bool {
+            if (peek() == a && peek2() == b) { advance(); advance(); return true; }
+            return false;
+        }
 
-tag_keyword =
-    "say" | "do" | "use" | "show" | "validate" | "pause" | "resume"
-  | "raise" | "throw" | "catch" | "reverse" | "rewind" | "suggest"
-  | "map" | "auto" | "archive" | "expire" | "loop" | "recall"
-  | "block" | "capture" | "measure" | "approximate" | "assert"
-  | "theorize" | "evaluate" | "proof" | "shorthand" | "mirror"
-  | "level" | "enum" | "ask" | "deny" | "halt" | "reference" ;
+        func stringLit() -> Token {
+            let startPos = pos; let startLine = line; let startCol = col;
+            advance(); // opening "
+            let buf = "";
+            loop {
+                if (atEnd()) break;
+                let c = advance();
+                if (c == '"') break;
+                if (c == '\\') {
+                    let e = advance();
+                    // minimal escapes
+                    if (e == 'n') buf += "\n";
+                    else if (e == 't') buf += "\t";
+                    else buf += e;
+                } else {
+                    buf += c;
+                }
+            }
+            return make(TokenType.String, startPos, startLine, startCol, buf);
+        }
 
-repeatable     = tag_keyword , "each" , "in" , collection_expr , block ;
+        func numberLit() -> Token {
+            let startPos = pos; let startLine = line; let startCol = col;
+            let buf = "";
+            let sawDot = false;
+            while (!atEnd()) {
+                let c = peek();
+                if (c == '.' && !sawDot) { sawDot = true; buf += advance(); }
+                else if (c >= '0' && c <= '9') { buf += advance(); }
+                else break;
+            }
+            return make(TokenType.Number, startPos, startLine, startCol, buf);
+        }
 
-collection_expr = "[" , expression , { "," , expression } , "]" ;
+        func identifierOrKeyword() -> Token {
+            let startPos = pos; let startLine = line; let startCol = col;
+            let buf = "";
+            while (!atEnd() && isAlnum_(peek())) buf += advance();
+            if (kws.contains(buf)) return make(kws[buf], startPos, startLine, startCol, buf);
+            return make(TokenType.Identifier, startPos, startLine, startCol, buf);
+        }
 
-program        = { capsule } , EOF ;
+        func nextToken() -> Token {
+            skipWSAndComments();
+            let startPos = pos; let startLine = line; let startCol = col;
+            if (atEnd()) return make(TokenType.EndOfFile, startPos, startLine, startCol, "");
+
+            // two-char operators
+            if (match2('-', '>')) return make(TokenType.Arrow, startPos, startLine, startCol, "->");
+            if (match2('=', '=')) return make(TokenType.EqEq, startPos, startLine, startCol, "==");
+            if (match2('!', '=')) return make(TokenType.Neq, startPos, startLine, startCol, "!=");
+            if (match2('<', '=')) return make(TokenType.Le, startPos, startLine, startCol, "<=");
+            if (match2('>', '=')) return make(TokenType.Ge, startPos, startLine, startCol, ">=");
+            if (match2('<', '<')) return make(TokenType.Shl, startPos, startLine, startCol, "<<");
+            if (match2('>', '>')) return make(TokenType.Shr, startPos, startLine, startCol, ">>");
+            if (match2('&', '&')) return make(TokenType.AndAnd, startPos, startLine, startCol, "&&");
+            if (match2('|', '|')) return make(TokenType.OrOr,  startPos, startLine, startCol, "||");
+            if (match2('+', '+')) return make(TokenType.PlusPlus, startPos, startLine, startCol, "++");
+            if (match2('-', '-')) return make(TokenType.MinusMinus, startPos, startLine, startCol, "--");
+
+            let c = advance();
+            switch (c) {
+                case '{': return make(TokenType.LBrace, startPos, startLine, startCol, "{");
+                case '}': return make(TokenType.RBrace, startPos, startLine, startCol, "}");
+                case '(': return make(TokenType.LParen, startPos, startLine, startCol, "(");
+                case ')': return make(TokenType.RParen, startPos, startLine, startCol, ")");
+                case '[': return make(TokenType.LBracket, startPos, startLine, startCol, "[");
+                case ']': return make(TokenType.RBracket, startPos, startLine, startCol, "]");
+                case ',': return make(TokenType.Comma, startPos, startLine, startCol, ",");
+                case ';': return make(TokenType.Semicolon, startPos, startLine, startCol, ";");
+                case '.': return make(TokenType.Dot, startPos, startLine, startCol, ".");
+                case '=': return make(TokenType.Assign, startPos, startLine, startCol, "=");
+                case '+': return make(TokenType.Plus, startPos, startLine, startCol, "+");
+                case '-': return make(TokenType.Minus, startPos, startLine, startCol, "-");
+                case '*': return make(TokenType.Star, startPos, startLine, startCol, "*");
+                case '/': return make(TokenType.Slash, startPos, startLine, startCol, "/");
+                case '%': return make(TokenType.Percent, startPos, startLine, startCol, "%");
+                case '&': return make(TokenType.Amp, startPos, startLine, startCol, "&");
+                case '|': return make(TokenType.Pipe, startPos, startLine, startCol, "|");
+                case '^': return make(TokenType.Caret, startPos, startLine, startCol, "^");
+                case '!': return make(TokenType.Bang, startPos, startLine, startCol, "!");
+                case '<': return make(TokenType.Lt, startPos, startLine, startCol, "<");
+                case '>': return make(TokenType.Gt, startPos, startLine, startCol, ">");
+                case '"': return stringLit();
+                default:
+                    if (isAlpha_(c)) { pos -= 1; col -= 1; return identifierOrKeyword(); }
+                    if (c >= '0' && c <= '9') { pos -= 1; col -= 1; return numberLit(); }
+                    return make(TokenType.Unknown, startPos, startLine, startCol, string(c));
+            }
+        }
+
+        func tokenize() -> vector<Token> {
+            let out = vector<Token>();
+            loop {
+                let t = nextToken();
+                out.push(t);
+                if (t.type == TokenType.EndOfFile) break;
+            }
+            return out;
+        }
+    }
+
+    // ----------------------------
+    // 2) AST (minimal, grow as needed)
+    // ----------------------------
+    enum NodeKind {
+        Program, Capsule, Struct, Class, Field, Func, Param, Block, Let, If, Loop, ForRange,
+        Say, Return, ExprStmt, EndStmt,
+        // expressions
+        Assign, Binary, Unary, Call, Member, Ident, Number, String
+    }
+
+    struct Node {
+        kind: NodeKind;
+        text: string;                  // identifier or operator token text
+        children: vector<Node>;
+        line: int; col: int;
+    }
+
+    func node(k: NodeKind, t: Token) -> Node {
+        return Node{ kind: k, text: t.lexeme, children: vector<Node>(), line: t.line, col: t.col };
+    }
+    func nodeBare(k: NodeKind) -> Node {
+        return Node{ kind: k, text: "", children: vector<Node>(), line: 0, col: 0 };
+    }
+    func add(n: ref Node, c: Node) { n.children.push(c); }
+
+    // ----------------------------
+    // 3) Parser (recursive descent)
+    // ----------------------------
+    struct Parser {
+        toks: vector<Token>; idx: int;
+
+        func init(ts: vector<Token>) { toks = ts; idx = 0; }
+        func atEnd() -> bool { return peek().type == TokenType.EndOfFile; }
+
+        func peek() -> Token { return toks[idx]; }
+        func prev() -> Token { return toks[idx-1]; }
+        func advance() -> Token { if (!atEnd()) idx += 1; return prev(); }
+        func check(tt: TokenType) -> bool { return peek().type == tt; }
+        func match(tt: TokenType) -> bool { if (check(tt)) { advance(); return true; } return false; }
+        func expect(tt: TokenType, msg: string) -> Token {
+            if (!check(tt)) errorHere(msg);
+            return advance();
+        }
+        func errorHere(msg: string) -> never {
+            let t = peek();
+            panic("Parse error at " + t.line + ":" + t.col + " — " + msg + " (saw '" + t.lexeme + "')");
+        }
+
+        // Entry
+        func parseProgram() -> Node {
+            let p = nodeBare(NodeKind.Program);
+            while (!atEnd()) {
+                add(p, parseTopLevel());
+            }
+            return p;
+        }
+
+        func parseTopLevel() -> Node {
+            if (match(TokenType.KwCapsule)) return parseCapsuleAfterKw();
+            if (check(TokenType.KwStruct))  return parseStructDecl();
+            if (check(TokenType.KwClass))   return parseClassDecl();
+            if (check(TokenType.KwFunc))    return parseFuncDecl();
+            // else fall back to a statement to allow script-style tops
+            return parseStmt();
+        }
+
+        func parseCapsuleAfterKw() -> Node {
+            let name = expect(TokenType.Identifier, "capsule name");
+            let cap = node(NodeKind.Capsule, name);
+            if (match(TokenType.KwFrom)) {
+                let s = expect(TokenType.String, "string after 'from'");
+                add(cap, Node{ kind: NodeKind.String, text: s.lexeme, children: vector<Node>(), line: s.line, col: s.col });
+            }
+            expect(TokenType.LBrace, "'{' to open capsule body");
+            while (!check(TokenType.RBrace) && !atEnd()) {
+                add(cap, parseTopLevel());
+            }
+            expect(TokenType.RBrace, "'}' to close capsule");
+            return cap;
+        }
+
+        func parseStructDecl() -> Node {
+            let kw = advance(); // struct
+            let name = expect(TokenType.Identifier, "struct name");
+            let st = node(NodeKind.Struct, name);
+            expect(TokenType.LBrace, "'{'");
+            while (!check(TokenType.RBrace) && !atEnd()) {
+                add(st, parseFieldDecl());
+            }
+            expect(TokenType.RBrace, "'}'");
+            return st;
+        }
+
+        func parseClassDecl() -> Node {
+            let kw = advance(); // class
+            let name = expect(TokenType.Identifier, "class name");
+            let cl = node(NodeKind.Class, name);
+            expect(TokenType.LBrace, "'{'");
+            while (!check(TokenType.RBrace) && !atEnd()) {
+                if (check(TokenType.KwLet)) add(cl, parseFieldDecl());
+                else add(cl, parseFuncDecl());
+            }
+            expect(TokenType.RBrace, "'}'");
+            return cl;
+        }
+
+        func parseFieldDecl() -> Node {
+            expect(TokenType.KwLet, "'let' for field");
+            let id = expect(TokenType.Identifier, "field name");
+            let fld = node(NodeKind.Field, id);
+            // [ ":" TypeExpr ] [ "=" Expr ] ";"
+            if (match(TokenType.Colon)) { /* hook up TypeExpr parser if you represent ':' explicitly */ }
+            if (match(TokenType.Assign)) add(fld, parseExpr());
+            expect(TokenType.Semicolon, "';'");
+            return fld;
+        }
+
+        func parseFuncDecl() -> Node {
+            expect(TokenType.KwFunc, "'func'");
+            let id = expect(TokenType.Identifier, "function name");
+            let fn = node(NodeKind.Func, id);
+            expect(TokenType.LParen, "'('");
+            if (!check(TokenType.RParen)) parseParamListInto(fn);
+            expect(TokenType.RParen, "')'");
+            if (match(TokenType.Arrow)) { /* TypeExpr placeholder if desired */ }
+            add(fn, parseBlock());
+            return fn;
+        }
+
+        func parseParamListInto(fn: ref Node) {
+            // Param ::= Identifier [ ":" TypeExpr ]
+            loop {
+                let pid = expect(TokenType.Identifier, "param name");
+                let p = node(NodeKind.Param, pid);
+                if (match(TokenType.Colon)) { /* parse TypeExpr if modeling types */ }
+                add(fn, p);
+                if (!match(TokenType.Comma)) break;
+            }
+        }
+
+        func parseBlock() -> Node {
+            let lb = expect(TokenType.LBrace, "'{' to start block");
+            let b = node(NodeKind.Block, lb);
+            while (!check(TokenType.RBrace) && !atEnd()) add(b, parseStmt());
+            expect(TokenType.RBrace, "'}' to end block");
+            return b;
+        }
+
+        func parseStmt() -> Node {
+            if (check(TokenType.KwLet))    return parseLetStmt();
+            if (check(TokenType.KwIf))     return parseIfStmt();
+            if (check(TokenType.KwLoop))   return parseLoopStmt();
+            if (check(TokenType.KwSay))    return parseSayStmt();
+            if (check(TokenType.KwReturn)) return parseReturnStmt();
+            if (check(TokenType.LBrace))   return parseBlock();
+            if (check(TokenType.KwEnd))    { let kw = advance(); let n = node(NodeKind.EndStmt, kw); expect(TokenType.Semicolon, "';'");
+                                             return n; }
+            // ExprStmt
+            let e = parseExpr();
+            expect(TokenType.Semicolon, "';'");
+            let s = nodeBare(NodeKind.ExprStmt); add(s, e); return s;
+        }
+
+        func parseLetStmt() -> Node {
+            let kw = advance();
+            let id = expect(TokenType.Identifier, "variable name");
+            let n = node(NodeKind.Let, id);
+            if (match(TokenType.Assign)) add(n, parseExpr());
+            expect(TokenType.Semicolon, "';'");
+            return n;
+        }
+
+        func parseIfStmt() -> Node {
+            let kw = advance();
+            expect(TokenType.LParen, "'(' after if");
+            let cond = parseExpr();
+            expect(TokenType.RParen, "')'");
+            let n = node(NodeKind.If, kw);
+            add(n, cond);
+            add(n, parseBlock());
+            if (match(TokenType.KwElse)) add(n, parseBlock());
+            return n;
+        }
+
+        func parseLoopStmt() -> Node {
+            let kw = advance(); // loop
+            let n = node(NodeKind.Loop, kw);
+            if (match(TokenType.KwFrom)) {
+                let a = parseExpr();
+                expect(TokenType.KwTo, "'to' in loop-from-to");
+                let b = parseExpr();
+                let fr = nodeBare(NodeKind.ForRange); add(fr, a); add(fr, b);
+                add(n, fr);
+                add(n, parseBlock());
+                return n;
+            }
+            add(n, parseBlock());
+            return n;
+        }
+
+        func parseSayStmt() -> Node {
+            let kw = advance();
+            let n = node(NodeKind.Say, kw);
+            add(n, parseExpr());
+            expect(TokenType.Semicolon, "';'");
+            return n;
+        }
+
+        func parseReturnStmt() -> Node {
+            let kw = advance();
+            let n = node(NodeKind.Return, kw);
+            if (!check(TokenType.Semicolon)) add(n, parseExpr());
+            expect(TokenType.Semicolon, "';'");
+            return n;
+        }
+
+        // ----------------------------
+        // Expressions (precedence ladder)
+        // ----------------------------
+        func parseExpr() -> Node { return parseAssign(); }
+
+        func parseAssign() -> Node {
+            // right-assoc: A = B = C
+            let left = parseOr();
+            if (match(TokenType.Assign)) {
+                let eqTok = prev();
+                let right = parseAssign();
+                let n = node(NodeKind.Assign, eqTok);
+                add(n, left); add(n, right); return n;
+            }
+            return left;
+        }
+
+        func parseOr()    -> Node { var n = parseAnd();    while (match(TokenType.OrOr))  { let op=prev(); let r=parseAnd();    n = bin(op, n, r); } return n; }
+        func parseAnd()   -> Node { var n = parseBitOr();  while (match(TokenType.AndAnd)){ let op=prev(); let r=parseBitOr();  n = bin(op, n, r); } return n; }
+        func parseBitOr() -> Node { var n = parseBitXor(); while (match(TokenType.Pipe))  { let op=prev(); let r=parseBitXor(); n = bin(op, n, r); } return n; }
+        func parseBitXor()-> Node { var n = parseBitAnd(); while (match(TokenType.Caret)) { let op=prev(); let r=parseBitAnd(); n = bin(op, n, r); } return n; }
+        func parseBitAnd()-> Node { var n = parseEq();     while (match(TokenType.Amp))   { let op=prev(); let r=parseEq();     n = bin(op, n, r); } return n; }
+
+        func parseEq() -> Node {
+            var n = parseRel();
+            loop {
+                if (match(TokenType.EqEq)) { let op=prev(); let r=parseRel(); n = bin(op, n, r); }
+                else if (match(TokenType.Neq)) { let op=prev(); let r=parseRel(); n = bin(op, n, r); }
+                else break;
+            }
+            return n;
+        }
+
+        func parseRel() -> Node {
+            var n = parseShift();
+            loop {
+                if (match(TokenType.Lt) || match(TokenType.Gt) || match(TokenType.Le) || match(TokenType.Ge)) {
+                    let op = prev(); let r = parseShift(); n = bin(op, n, r);
+                } else break;
+            }
+            return n;
+        }
+
+        func parseShift() -> Node {
+            var n = parseAdd();
+            loop {
+                if (match(TokenType.Shl) || match(TokenType.Shr)) {
+                    let op = prev(); let r = parseAdd(); n = bin(op, n, r);
+                } else break;
+            }
+            return n;
+        }
+
+        func parseAdd() -> Node {
+            var n = parseMul();
+            loop {
+                if (match(TokenType.Plus) || match(TokenType.Minus)) {
+                    let op = prev(); let r = parseMul(); n = bin(op, n, r);
+                } else break;
+            }
+            return n;
+        }
+
+        func parseMul() -> Node {
+            var n = parseUnary();
+            loop {
+                if (match(TokenType.Star) || match(TokenType.Slash) || match(TokenType.Percent)) {
+                    let op = prev(); let r = parseUnary(); n = bin(op, n, r);
+                } else break;
+            }
+            return n;
+        }
+
+        func parseUnary() -> Node {
+            if (match(TokenType.Bang) || match(TokenType.Minus) || match(TokenType.Plus) ||
+                match(TokenType.Star) || match(TokenType.Amp) || match(TokenType.PlusPlus) || match(TokenType.MinusMinus)) {
+                let op = prev();
+                let u = node(NodeKind.Unary, op);
+                add(u, parseUnary());
+                return u;
+            }
+            return parsePostfix();
+        }
+
+        func parsePostfix() -> Node {
+            var n = parsePrimary();
+            loop {
+                if (match(TokenType.PlusPlus) || match(TokenType.MinusMinus)) {
+                    let op = prev(); let u = node(NodeKind.Unary, op); add(u, n); n = u;
+                } else if (match(TokenType.LParen)) {
+                    // call
+                    let callTok = prev();
+                    let c = node(NodeKind.Call, callTok);
+                    add(c, n);
+                    if (!check(TokenType.RParen)) {
+                        // ArgList
+                        loop {
+                            add(c, parseExpr());
+                            if (!match(TokenType.Comma)) break;
+                        }
+                    }
+                    expect(TokenType.RParen, "')'");
+                    n = c;
+                } else if (match(TokenType.Dot)) {
+                    let id = expect(TokenType.Identifier, "member name after '.'");
+                    let m = node(NodeKind.Member, id);
+                    add(m, n);
+                    n = m;
+                } else break;
+            }
+            return n;
+        }
+
+        func parsePrimary() -> Node {
+            if (match(TokenType.Identifier)) return node(NodeKind.Ident, prev());
+            if (match(TokenType.Number))     return node(NodeKind.Number, prev());
+            if (match(TokenType.String))     return node(NodeKind.String, prev());
+            if (match(TokenType.LParen)) {
+                let n = parseExpr();
+                expect(TokenType.RParen, "')'");
+                return n;
+            }
+            errorHere("expected expression");
+        }
+
+        func bin(op: Token, a: Node, b: Node) -> Node {
+            let n = node(NodeKind.Binary, op);
+            add(n, a); add(n, b); return n;
+        }
+    }
+
+} // capsule Grammar.Core
+
+// ------------------------------------------------------------
+// 4) Minimal Demo Capsule (lex & parse, then say a summary)
+// ------------------------------------------------------------
+capsule GrammarDemo from "C-Major/GrammarDemo" {
+    use Grammar.Core;
+
+    func summarize(n: Node) -> string {
+        // compact pre-order summary
+        func walk(n: Node, into: ref string, depth: int) {
+            into += "[" + string(n.kind) + (n.text == "" ? "" : ":" + n.text) + "]";
+            for (let i=0; i<n.children.size(); i+=1) walk(n.children[i], into, depth+1);
+        }
+        let s = ""; walk(n, s, 0); return s;
+    }
+
+    func main() {
+        let sample = `
+            capsule Hello from "demo" {
+              func greet(name) {
+                let msg = "Hi, " + name;
+                say msg;
+                return;
+              }
+              func main() {
+                greet("C-Major");
+              }
+            }
+        `;
+        let lx = Lexer(); lx.init(sample);
+        let toks = lx.tokenize();
+        let ps = Parser(); ps.init(toks);
+        let ast = ps.parseProgram();
+        say summarize(ast);
+    }
+}
